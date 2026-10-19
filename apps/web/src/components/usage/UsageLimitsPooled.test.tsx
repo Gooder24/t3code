@@ -1,92 +1,141 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import type { LimitPresentations } from "@t3tools/shared/usageLimits";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+const consume = vi.hoisted(() => vi.fn());
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => true,
+}));
+vi.mock("../../state/server", () => ({ serverEnvironment: { consumeResetCredit: null } }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => consume }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
+vi.mock("../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
+vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: () => null }));
 
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 
-const now = Date.parse("2026-09-17T08:00:00.000Z");
-const presentations = new Map([
+const presentations: LimitPresentations = new Map([
   [
-    EnvironmentId.make("test-environment"),
+    EnvironmentId.make("env-a"),
     {
-      entry: { target: { label: "Test environment" } },
+      entry: { target: { label: "Test" } },
       serverConfig: {
+        usageLimitSources: [],
         providers: [
           {
-            instanceId: ProviderInstanceId.make("codex"),
+            instanceId: ProviderInstanceId.make("alpha"),
             driver: ProviderDriverKind.make("codex"),
-            displayName: "Codex",
+            displayName: "Alpha",
             enabled: true,
             installed: true,
             version: null,
-            status: "ready" as const,
-            auth: { status: "authenticated" as const, email: "codex@example.com" },
-            checkedAt: "2026-09-17T08:00:00.000Z",
+            status: "ready",
+            auth: { status: "authenticated", email: "alpha@example.com" },
+            checkedAt: "2026-09-03T11:00:00Z",
             models: [],
             slashCommands: [],
             skills: [],
             usageLimits: {
-              checkedAt: "2026-09-17T08:00:00.000Z",
+              checkedAt: "2026-09-03T11:00:00Z",
+              resetCredits: { availableCount: 1 },
               windows: [
                 {
-                  id: "session",
-                  kind: "session" as const,
+                  id: "five_hour",
+                  kind: "session",
                   label: "Session",
-                  usedPercent: 24,
-                  resetsAt: "2026-09-17T09:00:00.000Z",
-                },
-                {
-                  id: "weekly",
-                  kind: "weekly" as const,
-                  label: "Weekly",
-                  usedPercent: 32,
-                  resetsAt: "2026-09-20T08:00:00.000Z",
+                  usedPercent: 40,
+                  windowDurationMins: 300,
+                  resetsAt: "2026-09-03T14:00:00Z",
                 },
               ],
             },
-          },
+          } satisfies ServerProvider,
         ],
       },
     },
   ],
-]) satisfies ComponentProps<typeof UsageLimitsPooled>["presentations"];
+]);
 
-let container: HTMLDivElement;
 let root: Root;
+let container: HTMLDivElement;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.useFakeTimers();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  consume.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+  await act(() => root.render(<UsageLimitsPooled presentations={presentations} now={0} />));
 });
 
 afterEach(async () => {
-  await act(async () => root.unmount());
+  await act(() => root.unmount());
   container.remove();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-function segment(label: string): HTMLButtonElement {
-  const trigger = [...container.querySelectorAll("button")].find((button) =>
-    button.getAttribute("aria-label")?.startsWith(label),
+async function click(label: string) {
+  const button = Array.from(document.querySelectorAll("button")).find(
+    (node) => node.textContent === label || node.getAttribute("aria-label")?.startsWith(label),
   );
-  if (!trigger) throw new Error(`No segment labelled ${label}`);
-  return trigger;
+  expect(button).toBeDefined();
+  await act(() => button!.click());
 }
 
-function openPopovers(): string[] {
-  return [...document.querySelectorAll('[data-slot="popover-popup"]')].map(
-    (popup) => popup.textContent ?? "",
+it.each([
+  {
+    label: "success",
+    result: { _tag: "Success", value: { outcome: "reset" } },
+    text: "Reset applied. Your windows have cleared.",
+  },
+  {
+    label: "failure",
+    result: { _tag: "Failure", cause: { error: new Error("Codex rejected the credit.") } },
+    text: "Codex rejected the credit.",
+  },
+])("keeps pending feedback outside the closed popup until $label", async ({ result, text }) => {
+  let answer!: (result: unknown) => void;
+  consume.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+  await click("Alpha:");
+  await click("Use reset");
+  expect(consume).not.toHaveBeenCalled();
+  await click("Cancel");
+  expect(consume).not.toHaveBeenCalled();
+  await click("Alpha:");
+  await click("Use reset");
+  await click("Use credit");
+  expect(consume).toHaveBeenCalledOnce();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
+  const status = document.querySelector('[role="status"]');
+  expect(status?.textContent).toBe("Alpha Using reset credit…");
+  await click("Alpha:");
+  const using = Array.from(document.querySelectorAll("button")).find(
+    (node) => node.textContent === "Using…",
   );
-}
+  expect(using?.disabled).toBe(true);
+  await act(async () => answer(result));
+  expect(status?.textContent).toBe(`Alpha ${text}`);
+});
 
 /** The events a mouse sends moving between segments; popovers open once it rests on one. */
 async function hover(from: Element, to: Element) {
@@ -100,18 +149,52 @@ async function hover(from: Element, to: Element) {
 }
 
 it("keeps one limit popover open while moving between windows", async () => {
-  await act(async () => {
-    root.render(<UsageLimitsPooled presentations={presentations} now={now} />);
-  });
-  const session = segment("Codex: 76%");
-  const weekly = segment("Codex: 68%");
+  vi.useFakeTimers();
+  const [environmentId, presentation] = [...presentations][0]!;
+  const serverConfig = presentation.serverConfig!;
+  const provider = serverConfig.providers[0]!;
+  const twoWindows: LimitPresentations = new Map([
+    [
+      environmentId,
+      {
+        ...presentation,
+        serverConfig: {
+          ...serverConfig,
+          providers: [
+            {
+              ...provider,
+              usageLimits: {
+                ...provider.usageLimits!,
+                windows: [
+                  ...provider.usageLimits!.windows,
+                  { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 32 },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ],
+  ]);
+  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  const segment = (label: string) =>
+    Array.from(document.querySelectorAll("button")).find((node) =>
+      node.getAttribute("aria-label")?.startsWith(label),
+    )!;
+  const openPopovers = () =>
+    Array.from(
+      document.querySelectorAll('[data-slot="popover-popup"]'),
+      (node) => node.textContent,
+    );
+  const session = segment("Alpha: 60%");
+  const weekly = segment("Alpha: 68%");
 
-  await act(async () => session.click());
-  expect(openPopovers()).toEqual([expect.stringContaining("76%")]);
+  await act(() => session.click());
+  expect(openPopovers()).toEqual([expect.stringContaining("60%")]);
 
   await hover(session, weekly);
   expect(openPopovers()).toEqual([expect.stringContaining("68%")]);
 
   await hover(weekly, session);
-  expect(openPopovers()).toEqual([expect.stringContaining("76%")]);
+  expect(openPopovers()).toEqual([expect.stringContaining("60%")]);
 });
