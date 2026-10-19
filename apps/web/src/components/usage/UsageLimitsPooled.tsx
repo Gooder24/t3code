@@ -228,14 +228,14 @@ function ActiveSegmentPopover({
         (member) =>
           member.account.key === payload.account.key &&
           member.window.id === payload.window.id &&
-          member.window.kind === payload.window.kind,
+          member.window.kind === payload.window.kind &&
+          Boolean(member.account.redeem) === Boolean(payload.redeem),
       ),
     ),
   );
   useEffect(() => {
     if (!available) handle.close();
   }, [available, handle]);
-  if (!available) return null;
   return (
     <PopoverPopup side="top" sideOffset={6}>
       <SegmentPopover

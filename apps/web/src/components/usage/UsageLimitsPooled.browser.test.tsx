@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { LimitPresentations } from "@t3tools/shared/usageLimits";
@@ -222,8 +223,64 @@ it("moves the one limit popover between windows on hover", async () => {
 
   await act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />));
   await expect.poll(popups).toEqual([]);
+  await act(() => userEvent.hover(container, { position: { x: 4, y: 4 } }));
 
   await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  await expect.poll(popups).toEqual([]);
   await act(() => userEvent.click(segment("Alpha: 60%")));
   await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
+});
+
+it("closes an open source-account popover when reset availability replaces its trigger", async () => {
+  const [environmentId, presentation] = [...presentations("2026-09-03T14:00:00Z", 1)][0]!;
+  const provider = presentation.serverConfig!.providers[0]!;
+  const source = (nextCreditId?: string): LimitPresentations =>
+    new Map([
+      [
+        environmentId,
+        {
+          ...presentation,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                id: UsageLimitSourceId.make("hub"),
+                kind: "cliproxy",
+                label: "Hub",
+                checkedAt: "2026-09-03T11:00:00Z",
+                accounts: [
+                  {
+                    id: "Alpha",
+                    driver: provider.driver,
+                    usageLimits: {
+                      ...provider.usageLimits!,
+                      resetCredits: {
+                        availableCount: 1,
+                        ...(nextCreditId ? { nextCreditId } : {}),
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+  const popup = () => document.querySelector('[data-slot="popover-popup"]');
+  await act(() => root.render(<UsageLimitsPooled presentations={source("credit-1")} now={0} />));
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Use reset");
+
+  await act(() => root.render(<UsageLimitsPooled presentations={source()} now={0} />));
+  await expect.poll(popup).toBeNull();
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Left60%");
+
+  await act(() => root.render(<UsageLimitsPooled presentations={source("credit-2")} now={0} />));
+  await expect.poll(popup).toBeNull();
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Use reset");
+  await click("Use reset");
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).not.toBeNull();
 });
