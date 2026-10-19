@@ -219,4 +219,11 @@ it("moves the one limit popover between windows on hover", async () => {
   // Weekly's popover now sits over the middle of the Session bar; come back in at its edge.
   await act(() => userEvent.hover(session, { position: { x: 4, y: 4 } }));
   await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
+
+  await act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />));
+  await expect.poll(popups).toEqual([]);
+
+  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  await act(() => userEvent.click(segment("Alpha: 60%")));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 });

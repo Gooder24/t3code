@@ -14,7 +14,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { createContext, Fragment, type ReactNode, use, useState } from "react";
+import { createContext, Fragment, type ReactNode, use, useEffect, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -210,6 +210,45 @@ type SegmentPayload = Omit<Parameters<typeof SegmentPopover>[0], "now" | "onRede
 const SegmentPopoverContext = createContext<ReturnType<
   typeof PopoverCreateHandle<SegmentPayload>
 > | null>(null);
+
+function ActiveSegmentPopover({
+  handle,
+  payload,
+  pools,
+  now,
+}: {
+  readonly handle: ReturnType<typeof PopoverCreateHandle<SegmentPayload>>;
+  readonly payload: SegmentPayload;
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  const available = pools.some((pool) =>
+    displayLimitWindows(pool).some((window) =>
+      window.members.some(
+        (member) =>
+          member.account.key === payload.account.key &&
+          member.window.id === payload.window.id &&
+          member.window.kind === payload.window.kind,
+      ),
+    ),
+  );
+  useEffect(() => {
+    if (!available) handle.close();
+  }, [available, handle]);
+  if (!available) return null;
+  return (
+    <PopoverPopup side="top" sideOffset={6}>
+      <SegmentPopover
+        {...payload}
+        now={now}
+        onRedeem={() => {
+          handle.close();
+          payload.redeem?.setConfirming(true);
+        }}
+      />
+    </PopoverPopup>
+  );
+}
 
 /**
  * The confirm is a sibling of the popover, not a child: dialogs stack under
@@ -556,16 +595,12 @@ export function UsageLimitsPooled({
       <Popover handle={segmentPopover}>
         {({ payload }) =>
           payload ? (
-            <PopoverPopup side="top" sideOffset={6}>
-              <SegmentPopover
-                {...payload}
-                now={now}
-                onRedeem={() => {
-                  segmentPopover.close();
-                  payload.redeem?.setConfirming(true);
-                }}
-              />
-            </PopoverPopup>
+            <ActiveSegmentPopover
+              handle={segmentPopover}
+              payload={payload}
+              pools={pools}
+              now={now}
+            />
           ) : null
         }
       </Popover>
