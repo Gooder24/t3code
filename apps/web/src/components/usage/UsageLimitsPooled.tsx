@@ -222,6 +222,7 @@ function PoolSegment({
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
+  readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
@@ -266,11 +267,13 @@ function SegmentTriggers({
   window,
   reset,
   redeem,
+  refillPercent,
   color,
   now,
   index,
   showAccountName,
 }: SegmentPayload & {
+  readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
@@ -301,12 +304,12 @@ function SegmentTriggers({
           className="absolute inset-y-0 left-0 rounded-md opacity-35"
           style={{ width: `${remaining}%`, backgroundColor: color }}
         />
-        {remaining < 100 && reset ? (
+        {remaining < 100 && reset && refillPercent > 0 ? (
           <div
             aria-hidden
             className="absolute inset-y-0 right-0 opacity-20"
             style={{
-              width: `${100 - remaining}%`,
+              width: `${Math.min(100 - remaining, refillPercent)}%`,
               backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
             }}
           />
@@ -430,6 +433,7 @@ function PoolBar({
               account={member.account}
               window={member.window}
               reset={restores.get(member.account.key)}
+              refillPercent={member.refillPercent}
               color={color}
               now={now}
               index={position + 1}
