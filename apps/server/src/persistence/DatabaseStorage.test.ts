@@ -159,7 +159,7 @@ it.effect.each([
       yield* TestClock.adjust(1);
       assert.equal(yield* Deferred.await(started), startupTime + delay);
     }).pipe(Effect.provide(compactionLayer(compact)));
-  }).pipe(Effect.provide(testConfig), Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
 it.effect.each(["success", "compaction failure", "timestamp write failure"] as const)(
@@ -212,5 +212,5 @@ it.effect.each(["success", "compaction failure", "timestamp write failure"] as c
         const saved = Number(yield* fs.readFileString(timestampPath));
         assert.equal(saved, outcome === "success" ? startupTime + 3 * minute : Number(previous));
       }
-    }).pipe(Effect.provide(testConfig), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
