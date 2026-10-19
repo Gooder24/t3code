@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -10,6 +8,10 @@ import type { LimitPresentations } from "@t3tools/shared/usageLimits";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+// Real pointer clicks need the dialog's stacking styles to land above Base UI's modal overlay.
+import "~/index.css";
 
 const consume = vi.hoisted(() => vi.fn());
 vi.mock("../../state/session", () => ({
@@ -71,14 +73,6 @@ let container: HTMLDivElement;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
   consume.mockReset();
   container = document.createElement("div");
   document.body.append(container);
@@ -89,7 +83,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
-  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -98,7 +91,7 @@ async function click(label: string) {
     (node) => node.textContent === label || node.getAttribute("aria-label")?.startsWith(label),
   );
   expect(button).toBeDefined();
-  await act(() => button!.click());
+  await act(() => userEvent.click(button!));
 }
 
 it.each([
@@ -124,8 +117,9 @@ it.each([
   await click("Use reset");
   await click("Use credit");
   expect(consume).toHaveBeenCalledOnce();
-  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-  expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
+  // Both popups unmount once their exit animations finish.
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+  await expect.poll(() => document.querySelector('[data-slot="popover-popup"]')).toBeNull();
   const status = document.querySelector('[role="status"]');
   expect(status?.textContent).toBe("Alpha Using reset credit…");
   await click("Alpha:");
@@ -137,19 +131,7 @@ it.each([
   expect(status?.textContent).toBe(`Alpha ${text}`);
 });
 
-/** The events a mouse sends moving between segments; popovers open once it rests on one. */
-async function hover(from: Element, to: Element) {
-  await act(async () => {
-    from.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: to }));
-    to.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
-    to.dispatchEvent(new MouseEvent("mouseenter", { relatedTarget: from }));
-    to.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, movementX: 4 }));
-    await vi.runAllTimersAsync();
-  });
-}
-
-it("keeps one limit popover open while moving between windows", async () => {
-  vi.useFakeTimers();
+it("moves the one limit popover between windows on hover", async () => {
   const [environmentId, presentation] = [...presentations][0]!;
   const serverConfig = presentation.serverConfig!;
   const provider = serverConfig.providers[0]!;
@@ -176,25 +158,31 @@ it("keeps one limit popover open while moving between windows", async () => {
       },
     ],
   ]);
+  // Room above the bars so the popover opens there instead of flipping over the next card.
+  container.style.paddingTop = "20rem";
   await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
   const segment = (label: string) =>
     Array.from(document.querySelectorAll("button")).find((node) =>
       node.getAttribute("aria-label")?.startsWith(label),
     )!;
-  const openPopovers = () =>
-    Array.from(
-      document.querySelectorAll('[data-slot="popover-popup"]'),
-      (node) => node.textContent,
-    );
+  // Popup contents, once the previous segment's details have animated away.
+  const popups = () =>
+    document.querySelector("[data-previous]")
+      ? null
+      : Array.from(
+          document.querySelectorAll('[data-slot="popover-popup"]'),
+          (node) => node.textContent,
+        );
   const session = segment("Alpha: 60%");
   const weekly = segment("Alpha: 68%");
 
-  await act(() => session.click());
-  expect(openPopovers()).toEqual([expect.stringContaining("60%")]);
+  await act(() => userEvent.click(session));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 
-  await hover(session, weekly);
-  expect(openPopovers()).toEqual([expect.stringContaining("68%")]);
+  await act(() => userEvent.hover(weekly));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left68%")]);
 
-  await hover(weekly, session);
-  expect(openPopovers()).toEqual([expect.stringContaining("60%")]);
+  // Weekly's popover now sits over the middle of the Session bar; come back in at its edge.
+  await act(() => userEvent.hover(session, { position: { x: 4, y: 4 } }));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 });
