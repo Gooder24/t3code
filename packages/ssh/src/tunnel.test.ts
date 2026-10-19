@@ -1440,6 +1440,36 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "keeps managing its server after the connection's state key changes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, stateDir, launch, readManagedPid, runLaunch, launchManaged } =
+          yield* prepareLaunch;
+        const { launched, pid } = yield* launchManaged;
+        const renamedStateDir = `${home}/.t3/ssh-launch/renamed-state`;
+
+        const renamed = yield* runScript(home, [launch, "renamed-state"]);
+        assert.equal(renamed.exitCode, 0, renamed.stderr);
+        assert.deepEqual(launchResult(renamed.stdout), launched);
+        assert.equal((yield* fs.readFileString(`${renamedStateDir}/pid`)).trim(), `${pid}`);
+        assert.isFalse(yield* fs.exists(`${stateDir}/managed`));
+        assert.isTrue(isAlive(pid));
+
+        // The server came from the renamed connection's runner, so a different
+        // runner here is an update.
+        yield* fs.writeFileString(`${renamedStateDir}/run-t3.sh`, "# previous runner\n");
+        assert.equal((yield* runLaunch).serverKind, "managed");
+        const replacementPid = yield* readManagedPid;
+        assert.notEqual(replacementPid, pid);
+        assert.isFalse(isAlive(pid));
+        assert.isTrue(isAlive(replacementPid));
+        assert.isFalse(yield* fs.exists(`${renamedStateDir}/managed`));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
+  );
+
+  it.effect.skipIf(windowsHost)(
     "replaces a managed server that exited but was not reaped",
     () =>
       Effect.gen(function* () {

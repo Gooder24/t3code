@@ -635,6 +635,19 @@ try {
 }
 NODE
 }
+# Editing a connection's alias, user, or port gives it a new state key, while
+# the server it launched keeps running from the default home. Prints the state
+# directory that recorded PID $1 as managed, so that server stays managed.
+launcher_state_dir_for_pid() {
+  for OTHER_STATE_DIR in "$HOME/.t3/ssh-launch"/*; do
+    [ "$OTHER_STATE_DIR" != "$STATE_DIR" ] || continue
+    [ "$(cat "$OTHER_STATE_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    [ "$(cat "$OTHER_STATE_DIR/pid" 2>/dev/null || true)" = "$1" ] || continue
+    printf '%s\\n' "$OTHER_STATE_DIR"
+    return 0
+  done
+  return 1
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -652,6 +665,22 @@ fi
 if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_for_pid "$DEFAULT_RUNTIME_PID")"; then
+  # Adopting it as external would pin it to the old runner forever, and pairing
+  # with this runner against an older server fails. It runs the runner its own
+  # state wrote, not ours, so only that one decides whether this is an update.
+  if cmp -s "$PREVIOUS_STATE_DIR/run-t3.sh" "$RUNNER_FILE"; then
+    RUNNER_CHANGED=0
+  else
+    RUNNER_CHANGED=1
+  fi
+  REMOTE_PID="$DEFAULT_RUNTIME_PID"
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  REMOTE_MANAGED="managed"
+  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf 'managed\\n' >"$MANAGED_FILE"
+  rm -f "$PREVIOUS_STATE_DIR/pid" "$PREVIOUS_STATE_DIR/managed"
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
