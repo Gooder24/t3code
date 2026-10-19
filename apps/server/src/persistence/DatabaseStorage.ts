@@ -94,22 +94,17 @@ const make = Effect.gen(function* () {
     Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
   );
 
-  // A pass reads the whole event store, gigabytes on a long-lived install.
-  // Remembering when one last finished keeps the six-hour cadence across
-  // restarts instead of rescanning a minute into every launch.
+  // Even a pass that deletes nothing scans the event store. Persist completion
+  // so restarting does not trigger another scan before the six-hour interval.
   const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
-  const compact = maintenance.compactEventStore.pipe(
-    Effect.tap((result) =>
-      result.deletedEventCount > 0 || result.deletedReceiptCount > 0
-        ? Effect.logInfo("Compacted orchestration history", result)
-        : Effect.void,
-    ),
-    Effect.tap(() =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) => fs.writeFileString(compactedAtPath, String(now))),
-        Effect.ignore,
-      ),
-    ),
+  const compact = Effect.gen(function* () {
+    const result = yield* maintenance.compactEventStore;
+    const completedAt = yield* Clock.currentTimeMillis;
+    yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
+    if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
+      yield* Effect.logInfo("Compacted orchestration history", result);
+    }
+  }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Orchestration history compaction failed", { cause }),
     ),
