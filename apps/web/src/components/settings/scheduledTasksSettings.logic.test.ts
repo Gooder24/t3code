@@ -420,10 +420,30 @@ it("rejects dedupe templates without a request placeholder", () => {
 });
 
 it("appends the server zone only to fixed-time schedule labels", () => {
-  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "24-hour", "Etc/UTC")).toBe(
     "Daily at 16:31 UTC",
   );
-  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
-  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
-  expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" }, "24-hour")).toBe(
+    "Daily at 09:00",
+  );
+  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "24-hour", "Etc/UTC")).toBe(
+    "Every 1 min",
+  );
+  expect(scheduleLabel({ type: "webhook", signature: null }, "24-hour", "Etc/UTC")).toBe(
+    "On webhook",
+  );
+});
+
+it("shows schedule times in the Time format setting", () => {
+  const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
+  expect(scheduleLabel(daily, "24-hour")).toBe("Daily at 17:30");
+  expect(scheduleLabel(daily, "12-hour")).toMatch(/^Daily at 5:30\s?PM$/i);
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour")).toBe(
+    "Daily at 00:05",
+  );
+
+  // A local wall time, so the label reads 17:30 in any host zone.
+  const once = { type: "once", runAt: new Date(2026, 10, 20, 17, 30).toISOString() } as const;
+  expect(scheduleLabel(once, "24-hour")).toMatch(/^Once, .*\b17:30$/);
+  expect(scheduleLabel(once, "12-hour")).toMatch(/^Once, .*\b5:30\s?PM$/i);
 });
